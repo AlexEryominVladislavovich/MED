@@ -5,21 +5,39 @@ from doctor.models import Doctor
 from django.db.models import  UniqueConstraint
 from django.core.exceptions import ValidationError
 from django.utils import timezone
-from django.core.validators import MinValueValidator, MaxValueValidator, RegexValidator
+from django.core.validators import MinValueValidator, MaxValueValidator, RegexValidator, MinLengthValidator
 
 kg_phone_validator = RegexValidator(
-    regex=r'^\+996\(22\d|55\d|70\d|99\d)d{6}$',
-    message='Номер телефона должен начинаться с +996 и содержать 9 цифр после кода страны(Пример: +996700123456)'
+    regex=r'^\+996(22\d|55\d|70\d|99\d|77\d|54\d|51\d|57\d|56\d|50\d)\d{6}$',
+    message='Номер телефона начинается с +996 и должен содержать 9 цифр после кода страны(Пример: +996 700123456)'
 )
 
 class Profile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE)
-    full_name = models.CharField(max_length=35)
+    full_name = models.CharField(max_length=35, validators=[MinLengthValidator(5)])
     phone_number = models.CharField(
         max_length=13,
         validators=[kg_phone_validator],
         unique=True
     )
+
+    def clean(self):
+        super().clean()
+        value = ''.join(filter(str.isdigit, self.phone_number))
+        if len(value) == 9:
+            normalized = f'+996{value}'
+        elif len(value) == 10 and value.startswith('0'):
+            normalized = f'+996{value[1:]}'
+        elif len(value) == 12 and value.startswith('996'):
+            normalized = f'+{value}'
+        elif len(value) == 13 and value.startswith('+996'):
+            normalized = value
+        else:
+            raise ValidationError({'phone_number': 'Введите корректный номер в формате +996XXXXXXXXX'})
+        if Profile.objects.exclude(pk=self.pk).filter(phone_number=normalized).exists():
+            raise ValidationError({'phone_number':'Этот номер уже используеться.'})
+
+        self.phone_number = normalized
 
     def __str__(self):
          return f'{self.full_name}'
@@ -70,7 +88,7 @@ class Appointment(models.Model):
         constraints = [
             UniqueConstraint(
                 fields = ['doctor', 'appointment_time'],
-                name = 'unique_doctor_appointment_if_scheduled'
+                name = 'unique_doctor_appointment_time'
         )
     ]
 
@@ -88,10 +106,12 @@ class Appointment(models.Model):
         if Appointment.objects.filter(
             patient=self.patient,
             appointment_time=self.appointment_time
-        ).exclude(doctor=self.doctor).exclude(pk=self.pk).exist():
+        ).exclude(pk=self.pk).exists():
             raise ValidationError('Вы уже записаны к другому врачу на это время.')
         if self.status == 'rescheduled' and not self.rescheduled_from:
             raise ValidationError('Не указанно время переноса.')
+        if self.rescheduled_from and self.status != 'rescheduled':
+            raise ValidationError('Время переноса указанно, но статус не "перенесенно"')
 
 class Review(models.Model):
     doctor = models.ForeignKey(Doctor, on_delete=models.CASCADE)
@@ -138,6 +158,11 @@ class Notification(models.Model):
         super().clean()
         if self.profile != self.appointment.patient:
             raise ValidationError('Нельзя отправлять уведомления не тому пользователю.')
+        if Notification.objects.exclude(pk=self.pk).filter(
+            appointment=self.appointment,
+            message_type=self.message_type
+        ).exists():
+            raise ValidationError('Уведомление этого типа уже отправленно')
 
     def __str__(self):
         return f'{self.profile.full_name}-{self.message_type}'

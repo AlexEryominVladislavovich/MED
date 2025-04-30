@@ -3,30 +3,33 @@ from django.contrib.auth.models import User
 from .models import Profile, Appointment, Review, Notification, kg_phone_validator
 from doctor.serializers import DoctorSerializer
 from django.utils import timezone
+import re
 
 class ProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = Profile
         fields = '__all__'
 
-        # Убираем пробелы, тире и скобки
+        # Удаляем всё кроме цифр
     def validate_phone_number(self, value):
         raw = ''.join(filter(str.isdigit, value))
 
         if len(raw) == 9:
             value = f'+996{raw}'
-        elif raw.startswitch('996') and len(raw) == 12:
+        elif len(raw) == 10 and raw.startswitch('0'):
+            value = f'+996{raw[1:]}'
+        elif len(raw) == 12 and raw.startswitch('996'):
             value = f'+{raw}'
-        elif raw.startswitch('+996') and len(raw) == 13:
+        elif len(raw) == 13 and raw.startswitch('+996'):
             value = raw
+        if Profile.objects.filter(phone_number=value).exists():
+            raise serializers.ValidationError('Этот номер уже используется.')
         else:
             raise serializers.ValidationError(
                 'Введите коректный мобильный номер. Например 700123456'
             )
         kg_phone_validator(value)
         return value
-
-
 
 
 class PatientAppointmentSerializer(serializers.ModelSerializer):
