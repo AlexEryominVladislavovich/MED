@@ -1,10 +1,11 @@
-from xml.etree.ElementInclude import default_loader
+#from xml.etree.ElementInclude import default_loader
 from django.contrib.auth.models import User
 from django.db import models
 
+
 class Specialization(models.Model):
     name_specialization = models.CharField(max_length=30)
-    description_specialization = models.TextField
+    description_specialization = models.TextField()
 
     def __str__ (self):
         return f'{self.name_specialization}'
@@ -20,7 +21,7 @@ class Doctor(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-         return f'{self.first_name}-{self.last_name}'
+         return f'{self.user.first_name}-{self.user.last_name}'
 
 class Schedule(models.Model):
     day_of_weak = models.DateTimeField()

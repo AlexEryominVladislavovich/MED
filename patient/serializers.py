@@ -5,6 +5,9 @@ from doctor.serializers import DoctorSerializer
 from django.utils import timezone
 import re
 
+from ..med.wsgi import application
+
+
 class ProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = Profile
@@ -16,18 +19,19 @@ class ProfileSerializer(serializers.ModelSerializer):
 
         if len(raw) == 9:
             value = f'+996{raw}'
-        elif len(raw) == 10 and raw.startswitch('0'):
+        elif len(raw) == 10 and raw.startswitc('0'):
             value = f'+996{raw[1:]}'
-        elif len(raw) == 12 and raw.startswitch('996'):
+        elif len(raw) == 12 and raw.startswitc('996'):
             value = f'+{raw}'
-        elif len(raw) == 13 and raw.startswitch('+996'):
+        elif len(raw) == 13 and raw.startswitc('+996'):
             value = raw
-        if Profile.objects.filter(phone_number=value).exists():
-            raise serializers.ValidationError('Этот номер уже используется.')
         else:
             raise serializers.ValidationError(
                 'Введите коректный мобильный номер. Например 700123456'
             )
+        if Profile.objects.filter(phone_number=value).exists():
+            raise serializers.ValidationError('Этот номер уже используется.')
+
         kg_phone_validator(value)
         return value
 
@@ -44,7 +48,11 @@ class AppointmentCreateSerializer(serializers.ModelSerializer):
         model = Appointment
         fields = ['appointment_time', 'rescheduled_from', 'visit_reason', 'description', 'status']
 
-    def validate_appointment_time(selfself, value):
+    def validate_description_length(self, value):
+        if len(value) > 1000:
+            raise serializers.ValidationError('Сообщение не должно привышать 1000 символов')
+
+    def validate_appointment_time(self, value):
         if value < timezone.now():
             raise serializers.ValidationError('Это время не корректно. Данное время уже истекло')
         return value
@@ -69,6 +77,11 @@ class AppointmentCreateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError('Вы уже записаны к врачу на это время.')
         return data
 
+    def create(self, validated_data):
+        request = self.context['request']
+        validated_data['patient'] = request.user.profile   # Автоматически добавляет пациента
+        return super().create(validated_data)
+
 class PatientReviewSerializers(serializers.ModelSerializer):
     patient = ProfileSerializer()
     doctor = DoctorSerializer()
@@ -76,12 +89,51 @@ class PatientReviewSerializers(serializers.ModelSerializer):
     class Meta:
         model = Review
         fields = ['rating', 'comment']
+        read_only_fields = ['doctor', 'patient', 'create_at']
+
+    def validate(self, data):
+        appointment = data.get('appointment')
+        user = self.context['request'].user
+
+        if appointment.patient.user != user:
+            raise serializers.ValidationError('Вы можетет оставлять заявки только на свой приём')
+
+        if appointment.status != 'visited':
+            raise serializers.ValidationError('В можете оставить отзыв только после посещения приёма')
+
+        return data
+
+    # Используем метод create послольку поля 'doctor' и 'patient' находятся в поле read_only_fields
+    def create(self, validated_data):
+        # Автоподставка doctor и patient
+        appointment = validated_data['appointment']
+        validated_data['doctor'] =  appointment.doctor
+        validated_data['patient'] = appointment.patient
+        return super().create(validate_data)
+
+
 
 class PatientNotificationSerializers(serializers.ModelSerializer):
     appointment = PatientAppointmentSerializer()
     class Meta:
         model = Notification
-        fields = ['message', 'error_message']
+        fields = ['message']
+        read_only_fields = ['sent_at', 'status', 'error_message']
+
+    def validate(self, data):
+        request = self.context['request']
+        profile  = request.user.profile # Автоматически получаем профиль
+
+        appointment = data.get('appointment')
+        if appointment and appointment.patient != profile:
+            raise serializers.ValidationError('Нельзя отправить сообщение пациенту не с заявки')
+        return data
+
+    def validate_message_empty(self, value):
+        if not value.strip():
+            raise serializers.ValidatorError('Сообщение не может быть пустым')
+        return value
+
 
 
 

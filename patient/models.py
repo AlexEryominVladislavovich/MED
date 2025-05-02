@@ -5,7 +5,7 @@ from doctor.models import Doctor
 from django.db.models import  UniqueConstraint
 from django.core.exceptions import ValidationError
 from django.utils import timezone
-from django.core.validators import MinValueValidator, MaxValueValidator, RegexValidator, MinLengthValidator
+from django.core.validators import MinValueValidator, MaxValueValidator, RegexValidator, MinLengthValidator, MaxLengthValidator
 
 kg_phone_validator = RegexValidator(
     regex=r'^\+996(22\d|55\d|70\d|99\d|77\d|54\d|51\d|57\d|56\d|50\d)\d{6}$',
@@ -72,7 +72,7 @@ class Appointment(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     status = models.CharField(choices=STATUS_CHOICES, default='scheduled')
-    description = models.TextField(blank=True, null=True)
+    description = models.TextField(blank=True, null=True, validators = [MaxLengthValidator(1000)])
 
     def is_open(self):
         return self.status in self.STATUS_OPEN
@@ -132,6 +132,12 @@ class Review(models.Model):
         if self.appointment.status != 'visited':
             raise ValidationError('Оставить отзыв можно только после посщения')
 
+    # Определяет доктора который привязан к заявке
+    def save(self, *args, **kwargs):
+        if not self.doctor and self.appointment:
+            self.doctor = self.appointment.doctor
+        super().save(*args, **kwargs)
+
 class Notification(models.Model):
 
     STATUS_CHOICES = [
@@ -163,6 +169,8 @@ class Notification(models.Model):
             message_type=self.message_type
         ).exists():
             raise ValidationError('Уведомление этого типа уже отправленно')
+        if not self.message or self.message.strip():
+            raise ValidedionError({'message':'Сообщение не может быть пустым'})
 
     def __str__(self):
         return f'{self.profile.full_name}-{self.message_type}'
