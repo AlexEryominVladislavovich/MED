@@ -43,7 +43,8 @@ INSTALLED_APPS = [
     'patient',
     'rest_framework',
     'rest_framework_simplejwt',
-
+    'request',
+    'drf_yasg',
 ]
 
 REST_FRAMEWORK = {

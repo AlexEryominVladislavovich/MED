@@ -6,23 +6,54 @@ from django.db.models import  UniqueConstraint
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 from django.core.validators import MinValueValidator, MaxValueValidator, RegexValidator, MinLengthValidator, MaxLengthValidator
+import re
 
 kg_phone_validator = RegexValidator(
     regex=r'^\+996(22\d|55\d|70\d|99\d|77\d|54\d|51\d|57\d|56\d|50\d)\d{6}$',
     message='Номер телефона начинается с +996 и должен содержать 9 цифр после кода страны(Пример: +996 700123456)'
 )
 
+# Валидатор для кыргызских имен
+name_validator = RegexValidator(
+    regex=r'^[а-яА-ЯёЁa-zA-ZҢңӨөҮү\s\-]+$',
+    message='Имя может содержать только русские, английские буквы, символы Ң ң, Ө ө, Ү ү и дефис'
+)
+
 class Profile(models.Model):
-    user = models.OneToOneField(User, on_delete=models.CASCADE)
-    full_name = models.CharField(max_length=35, validators=[MinLengthValidator(5)])
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        verbose_name="Пользователь"
+    )
+    full_name = models.CharField(
+        max_length=35,
+        validators=[
+            MinLengthValidator(4, message='ФИО должно содержать минимум 4 символа'),
+            name_validator
+        ],
+        verbose_name="ФИО"
+    )
     phone_number = models.CharField(
         max_length=13,
         validators=[kg_phone_validator],
-        unique=True
+        unique=True,
+        verbose_name="Номер телефона"
     )
+
+    class Meta:
+        verbose_name = "Профиль"
+        verbose_name_plural = "Профили"
 
     def clean(self):
         super().clean()
+        # Нормализация имени
+        if self.full_name:
+            # Убираем множественные пробелы
+            self.full_name = ' '.join(self.full_name.split())
+            # Каждое слово с большой буквы
+            self.full_name = ' '.join(word.capitalize() for word in self.full_name.split())
+
+        # Нормализация телефона
         value = ''.join(filter(str.isdigit, self.phone_number))
         if len(value) == 9:
             normalized = f'+996{value}'
@@ -35,12 +66,12 @@ class Profile(models.Model):
         else:
             raise ValidationError({'phone_number': 'Введите корректный номер в формате +996XXXXXXXXX'})
         if Profile.objects.exclude(pk=self.pk).filter(phone_number=normalized).exists():
-            raise ValidationError({'phone_number':'Этот номер уже используеться.'})
+            raise ValidationError({'phone_number':'Этот номер уже используется'})
 
         self.phone_number = normalized
 
     def __str__(self):
-         return f'{self.full_name}'
+        return f'{self.full_name}'
 
 class Appointment(models.Model):
     STATUS_CHOICES = [
@@ -50,29 +81,79 @@ class Appointment(models.Model):
         ('cancelled_by_patient', 'Отменена пациентом'),
         ('cancelled_by_admin', 'Отменена админом'),
         ('rescheduled', 'Перенос'),
+        ('completed_with_treatment', 'Завершено с назначением лечения')
     ]
 
     VISIT_REASON_CHOICES = [
-        ('diagnostics', 'Обследование'),
+        ('examination', 'Обследование'),
         ('treatment', 'Лечение'),
     ]
 
     STATUS_OPEN = ['scheduled']
     STATUS_CLOSED = ['visited', 'no_show', 'cancelled_by_patient', 'cancelled_by_admin', 'rescheduled']
 
-    patient = models.ForeignKey(Profile, on_delete=models.CASCADE, related_name='appointments')
-    doctor = models.ForeignKey(Doctor, on_delete=models.PROTECT, related_name='appointments')
+    patient = models.ForeignKey(
+        Profile,
+        on_delete=models.CASCADE,
+        related_name='appointments',
+        verbose_name="Пациент"
+    )
+    doctor = models.ForeignKey(
+        Doctor,
+        on_delete=models.PROTECT,
+        related_name='appointments',
+        verbose_name="Врач"
+    )
+    time_slot = models.OneToOneField(
+        'doctor.TimeSlot',
+        on_delete=models.PROTECT,
+        verbose_name="Временной слот"
+    )
+    diagnosis = models.TextField(
+        blank=True,
+        null=True,
+        verbose_name="Диагноз"
+    )
+    treatment_appointment = models.OneToOneField(
+        'self',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='examination_appointment',
+        verbose_name="Назначенное лечение"
+    )
 
-    appointment_time = models.DateTimeField()
-    rescheduled_from = models.DateTimeField(blank=True, null=True)
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name="Дата создания"
+    )
+    updated_at = models.DateTimeField(
+        auto_now=True,
+        verbose_name="Дата обновления"
+    )
 
-    visit_reason = models.CharField(choices=VISIT_REASON_CHOICES, default='diagnostics')
+    status = models.CharField(
+        choices=STATUS_CHOICES,
+        default='scheduled',
+        verbose_name="Статус"
+    )
+    description = models.TextField(
+        blank=True,
+        null=True,
+        validators=[MaxLengthValidator(1000)],
+        verbose_name="Описание"
+    )
 
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    status = models.CharField(choices=STATUS_CHOICES, default='scheduled')
-    description = models.TextField(blank=True, null=True, validators = [MaxLengthValidator(1000)])
+    # Запрещает пересечение новых заявок с занятым временем
+    class Meta:
+        verbose_name = "Запись на приём"
+        verbose_name_plural = "Записи на приём"
+        constraints = [
+            UniqueConstraint(
+                fields=['doctor', 'time_slot'],
+                name='unique_doctor_time_slot'
+            )
+        ]
 
     def is_open(self):
         return self.status in self.STATUS_OPEN
@@ -81,50 +162,79 @@ class Appointment(models.Model):
         return self.status in self.STATUS_CLOSED
 
     def __str__(self):
-        return f"{self.patient.username} → {self.doctor} @ {self.appointment_time.strftime('%Y-%m-%d %H:%M')} [{self.get_status_display()}]"
-
-    # Запрещает пересичение новых заявок с занятым временем.
-    class Meta:
-        constraints = [
-            UniqueConstraint(
-                fields = ['doctor', 'appointment_time'],
-                name = 'unique_doctor_appointment_time'
-        )
-    ]
+        return f"{self.patient.username} → {self.doctor} @ {self.time_slot.start_time.strftime('%Y-%m-%d %H:%M')} [{self.get_status_display()}]"
 
     def clean(self):
         super().clean()
-        if not self.doctor.is_available(self.appointment_time):
-            raise ValidationError ('Врач не доступен в это время.')
-        if self.appointment_time <  timezone.now():
-            raise ValidationError ('Вы пытаетесь записаться в прошлое.')
+        if not self.doctor.is_available(self.time_slot.start_time):
+            raise ValidationError('Врач не доступен в это время.')
+        if self.time_slot.start_time < timezone.now():
+            raise ValidationError('Вы пытаетесь записаться в прошлое.')
+            
+        # Проверка рабочих часов
+        appointment_time = self.time_slot.start_time.time()
+        if appointment_time.hour < 8 or appointment_time.hour >= 18:
+            raise ValidationError('Время приёма должно быть с 8:00 до 19:00')
+        
+        # Проверка длительности
+        if self.time_slot.start_time.minute % 5 != 0:
+            raise ValidationError('Время приёма должно быть кратно 5 минутам')
+
         if Appointment.objects.filter(
             doctor=self.doctor,
-            appointment_time=self.appointment_time
+            time_slot=self.time_slot
         ).exclude(pk=self.pk).exists():
             raise ValidationError('На это время уже есть запись.')
         if Appointment.objects.filter(
             patient=self.patient,
-            appointment_time=self.appointment_time
+            time_slot=self.time_slot
         ).exclude(pk=self.pk).exists():
             raise ValidationError('Вы уже записаны к другому врачу на это время.')
-        if self.status == 'rescheduled' and not self.rescheduled_from:
+        if self.status == 'rescheduled' and not self.treatment_appointment:
             raise ValidationError('Не указанно время переноса.')
-        if self.rescheduled_from and self.status != 'rescheduled':
+        if self.treatment_appointment and self.status != 'rescheduled':
             raise ValidationError('Время переноса указанно, но статус не "перенесенно"')
 
 class Review(models.Model):
-    doctor = models.ForeignKey(Doctor, on_delete=models.CASCADE)
-    patient = models.ForeignKey(Profile, on_delete=models.DO_NOTHING)
-    appointment = models.OneToOneField(Appointment, on_delete=models.CASCADE)
-    comment = models.TextField()
-    create_at = models.DateTimeField(auto_now_add=True)
+    doctor = models.ForeignKey(
+        Doctor,
+        on_delete=models.CASCADE,
+        verbose_name="Врач"
+    )
+    patient = models.ForeignKey(
+        Profile,
+        on_delete=models.DO_NOTHING,
+        verbose_name="Пациент"
+    )
+    appointment = models.OneToOneField(
+        Appointment,
+        on_delete=models.CASCADE,
+        verbose_name="Приём"
+    )
+    comment = models.TextField(
+        validators=[
+            MinLengthValidator(5, message='Минимальная длина отзыва - 10 символов'),
+            MaxLengthValidator(500, message='Максимальная длина отзыва - 500 символов')
+        ],
+        verbose_name="Комментарий"
+    )
     rating = models.IntegerField(
         validators=[
-            MinValueValidator(1),
-            MaxValueValidator(5)
-        ]
+            MinValueValidator(1, message='Минимальная оценка - 1'),
+            MaxValueValidator(5, message='Максимальная оценка - 5')
+        ],
+        verbose_name="Оценка"
     )
+    create_at = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name="Дата создания"
+    )
+
+    class Meta:
+        verbose_name = "Отзыв"
+        verbose_name_plural = "Отзывы"
+        ordering = ['-create_at']
+
     def clean(self):
         super().clean()
         if self.appointment.patient != self.patient:
@@ -139,40 +249,94 @@ class Review(models.Model):
         super().save(*args, **kwargs)
 
 class Notification(models.Model):
-
     STATUS_CHOICES = [
-        ('sent', 'отправленно'),
-        ('pending', 'в ожидании'),
-        ('failed', 'не доставленно')
+        ('sent', 'Отправлено'),
+        ('pending', 'В ожидании'),
+        ('failed', 'Не доставлено')
     ]
 
     MESSAGE_TYPES = (
+        ('appointment_created', 'Заявка создана'),
+        ('appointment_reminder', 'Напоминание о записи'),
+        ('registration_code', 'Код подтверждения'),
         ('registration_success', 'Успешная регистрация'),
-        ('appointment_reminder', 'Оповищение')
+        ('appointment_confirmation', 'Подтверждение записи'),
+        ('appointment_cancellation', 'Отмена записи'),
+        ('treatment_assigned', 'Назначено лечение')
     )
 
-    appointment = models.OneToOneField(Appointment, on_delete=models.CASCADE)
-    profile = models.ForeignKey(Profile, on_delete=models.CASCADE)
+    appointment = models.ForeignKey(
+        Appointment,
+        on_delete=models.CASCADE,
+        related_name='notifications',
+        verbose_name="Приём",
+        null=True,
+        blank=True  # Для уведомлений регистрации appointment не нужен
+    )
+    profile = models.ForeignKey(
+        Profile,
+        on_delete=models.CASCADE,
+        related_name='notifications',
+        verbose_name="Профиль",
+        null=True,
+        blank=True  # Для неавторизованных пользователей профиля нет
+    )
+    phone_number = models.CharField(
+        max_length=13,
+        validators=[kg_phone_validator],
+        null=True,
+        blank=True,
+        verbose_name="Номер телефона"
+    )
+    email = models.EmailField(
+        null=True,
+        blank=True,
+        verbose_name="Email"
+    )
+    sent_at = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name="Дата отправки"
+    )
+    message_type = models.CharField(
+        max_length=50,
+        choices=MESSAGE_TYPES,
+        verbose_name="Тип сообщения"
+    )
+    message = models.TextField(
+        validators=[MinLengthValidator(5)],
+        verbose_name="Сообщение"
+    )
+    status = models.CharField(
+        max_length=20,
+        default='pending',
+        choices=STATUS_CHOICES,
+        verbose_name="Статус"
+    )
+    error_message = models.TextField(
+        null=True,
+        blank=True,
+        verbose_name="Сообщение об ошибке"
+    )
+    verification_code = models.CharField(
+        max_length=6,
+        null=True,
+        blank=True,
+        verbose_name="Код подтверждения"
+    )
 
-    sent_at = models.DateTimeField(auto_now_add=True)
-    message_type = models.CharField(max_length=50, choices=MESSAGE_TYPES)
-    message = models.CharField(max_length=255)
-    status = models.CharField(max_length=20, default = 'pending')
-    error_message = models.CharField(null=True, blank=True)
-
-    def clean(self):
-        super().clean()
-        if self.profile != self.appointment.patient:
-            raise ValidationError('Нельзя отправлять уведомления не тому пользователю.')
-        if Notification.objects.exclude(pk=self.pk).filter(
-            appointment=self.appointment,
-            message_type=self.message_type
-        ).exists():
-            raise ValidationError('Уведомление этого типа уже отправленно')
-        if not self.message or self.message.strip():
-            raise ValidedionError({'message':'Сообщение не может быть пустым'})
+    class Meta:
+        verbose_name = "Уведомление"
+        verbose_name_plural = "Уведомления"
+        ordering = ['-sent_at']
+        indexes = [
+            models.Index(fields=['profile', '-sent_at']),
+            models.Index(fields=['appointment', 'message_type']),
+            models.Index(fields=['phone_number', 'message_type']),
+            models.Index(fields=['verification_code'])
+        ]
 
     def __str__(self):
-        return f'{self.profile.full_name}-{self.message_type}'
+        recipient = self.profile if self.profile else self.phone_number
+        return f"{self.get_message_type_display()} для {recipient} ({self.get_status_display()})"
 
 
