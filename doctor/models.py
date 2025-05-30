@@ -33,6 +33,15 @@ def doctor_photo_path(instance, filename):
     new_filename = f"{instance.user.username}.{ext}"
     return os.path.join('doctors', 'photos', str(instance.id), new_filename)
 
+def doctor_gallery_photo_path(instance, filename):
+    """
+    Генерирует путь для сохранения фото в галерее врача.
+    Формат: doctors/gallery/<doctor_id>/<filename>
+    """
+    ext = filename.split('.')[-1]
+    new_filename = f"gallery_{instance.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.{ext}"
+    return os.path.join('doctors', 'gallery', str(instance.doctor.id), new_filename)
+
 class Specialization(models.Model):
     name_specialization = models.CharField(
         max_length=30,
@@ -55,6 +64,11 @@ class Doctor(models.Model):
         User,
         on_delete=models.CASCADE,
         verbose_name="Пользователь"
+    )
+    patronymic = models.CharField(
+        max_length=50,
+        blank=True,
+        verbose_name="Отчество"
     )
     photo = models.ImageField(
         upload_to=doctor_photo_path,
@@ -380,4 +394,36 @@ class TimeSlot(models.Model):
 
     def __str__(self):
         return f"{self.doctor} - {self.date} {self.start_time} ({self.get_slot_type_display()})"
+
+class DoctorPhoto(models.Model):
+    doctor = models.ForeignKey(
+        Doctor,
+        on_delete=models.CASCADE,
+        related_name='photos',
+        verbose_name="Врач"
+    )
+    image = models.ImageField(
+        upload_to=doctor_gallery_photo_path,
+        validators=[
+            FileExtensionValidator(['jpg', 'jpeg', 'png', 'webp']),
+            validate_image_size
+        ],
+        verbose_name="Фотография"
+    )
+    order = models.PositiveIntegerField(
+        default=0,
+        verbose_name="Порядок отображения"
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name="Дата добавления"
+    )
+
+    class Meta:
+        verbose_name = "Фотография врача"
+        verbose_name_plural = "Фотографии врача"
+        ordering = ['order', 'created_at']
+
+    def __str__(self):
+        return f"Фото {self.id} врача {self.doctor}"
 

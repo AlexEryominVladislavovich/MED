@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
-from .models import Doctor, Specialization, Schedule, ScheduleTemplate, TimeSlot
+from .models import Doctor, Specialization, Schedule, ScheduleTemplate, TimeSlot, DoctorPhoto
 import re
 from datetime import datetime, timedelta
 
@@ -54,7 +54,7 @@ class DoctorSerializer(serializers.ModelSerializer):
     class Meta:
         model = Doctor
         fields = [
-            'id', 'user', 'room_number', 'bio', 'phone_number',
+            'id', 'user',  'patronymic', 'room_number', 'bio', 'phone_number',
             'specialization', 'schedules', 'is_active', 'available_slots',
             'photo', 'photo_url'
         ]
@@ -81,13 +81,10 @@ class DoctorSerializer(serializers.ModelSerializer):
         return []
 
     def get_photo_url(self, obj):
-        """
-        Получает URL фотографии врача.
-        
-        Returns:
-            str: URL фотографии или None, если фото не установлено
-        """
-        if obj.photo:
+        request = self.context.get('request')
+        if obj.photo and request:
+            return request.build_absolute_uri(obj.photo.url)
+        elif obj.photo:
             return obj.photo.url
         return None
 
@@ -213,6 +210,104 @@ class TimeSlotSerializer(serializers.ModelSerializer):
         data = super().to_representation(instance)
         data['end_time'] = instance.get_end_time()
         return data
+
+class DoctorPhotoSerializer(serializers.ModelSerializer):
+    photo_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = DoctorPhoto
+        fields = ['id', 'image', 'order', 'photo_url']
+        read_only_fields = ['id', 'photo_url']
+
+    def get_photo_url(self, obj):
+        request = self.context.get('request')
+        if obj.image and request:
+            return request.build_absolute_uri(obj.image.url)
+        elif obj.image:
+            return obj.image.url
+        return None
+
+class DoctorDetailSerializer(serializers.ModelSerializer):
+    user = UserSerializer(read_only=True)
+    specialization = SpecializationSerializer(many=True, read_only=True)
+    full_name = serializers.SerializerMethodField()
+    photos = DoctorPhotoSerializer(many=True, read_only=True, source='photos.all')
+    photo_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Doctor
+        fields = [
+            'id', 'user', 'patronymic', 'full_name', 'room_number',
+            'bio', 'phone_number', 'specialization', 'photo_url',
+            'photos', 'is_active'
+        ]
+
+    def get_full_name(self, obj):
+        return f"{obj.user.last_name} {obj.user.first_name} {obj.patronymic}".strip()
+
+    def get_photo_url(self, obj):
+        request = self.context.get('request')
+        if obj.photo and request:
+            return request.build_absolute_uri(obj.photo.url)
+        elif obj.photo:
+            return obj.photo.url
+        return None
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        # Добавляем request в контекст для DoctorPhotoSerializer
+        photos_serializer = DoctorPhotoSerializer(
+            instance.photos.all(),
+            many=True,
+            context=self.context
+        )
+        data['photos'] = photos_serializer.data
+        return data
+
+class TimeSlotSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TimeSlot
+        fields = [
+            'id', 'date', 'start_time', 'duration',
+            'slot_type', 'is_available'
+        ]
+
+class ScheduleSerializer(serializers.ModelSerializer):
+    day_of_week_display = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Schedule
+        fields = [
+            'id', 'day_of_week', 'day_of_week_display',
+            'start_time', 'end_time', 'break_start', 'break_end'
+        ]
+
+    def get_day_of_week_display(self, obj):
+        return obj.get_day_of_week_display()
+
+class DoctorListSerializer(serializers.ModelSerializer):
+    user = UserSerializer(read_only=True)
+    specialization = SpecializationSerializer(many=True, read_only=True)
+    full_name = serializers.SerializerMethodField()
+    photo_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Doctor
+        fields = [
+            'id', 'user', 'full_name', 'patronymic', 'photo', 'photo_url',
+            'specialization', 'room_number', 'bio', 'is_active'
+        ]
+
+    def get_full_name(self, obj):
+        return f"{obj.user.last_name} {obj.user.first_name} {obj.patronymic or ''}".strip()
+
+    def get_photo_url(self, obj):
+        request = self.context.get('request')
+        if obj.photo and request:
+            return request.build_absolute_uri(obj.photo.url)
+        elif obj.photo:
+            return obj.photo.url
+        return None
 
 
 

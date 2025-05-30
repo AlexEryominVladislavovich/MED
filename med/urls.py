@@ -32,7 +32,7 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path('', include(router.urls)),
     path('api/v1/patient/', include('patient.urls')),
-    path('api/v1/doctor/', include('doctor.urls')),
+    path('api/doctors/', include('doctor.urls')),  # Основной URL для API врачей
     path('api/token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
