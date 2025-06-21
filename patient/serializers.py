@@ -1,7 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
 from .models import Profile, Appointment, Review, Notification, kg_phone_validator
-from doctor.serializers import DoctorSerializer
 from django.utils import timezone
 import re
 
@@ -18,15 +17,15 @@ class ProfileSerializer(serializers.ModelSerializer):
 
         if len(raw) == 9:
             value = f'+996{raw}'
-        elif len(raw) == 10 and raw.startswitc('0'):
+        elif len(raw) == 10 and raw.startswith('0'):
             value = f'+996{raw[1:]}'
-        elif len(raw) == 12 and raw.startswitc('996'):
+        elif len(raw) == 12 and raw.startswith('996'):
             value = f'+{raw}'
-        elif len(raw) == 13 and raw.startswitc('+996'):
+        elif len(raw) == 13 and raw.startswith('+996'):
             value = raw
         else:
             raise serializers.ValidationError(
-                'Введите коректный мобильный номер. Например 700123456'
+                'Введите корректный мобильный номер. Например 700123456'
             )
         if Profile.objects.filter(phone_number=value).exists():
             raise serializers.ValidationError('Этот номер уже используется.')
@@ -37,7 +36,7 @@ class ProfileSerializer(serializers.ModelSerializer):
 
 class PatientAppointmentSerializer(serializers.ModelSerializer):
     patient = ProfileSerializer(read_only=True)
-    doctor = DoctorSerializer(read_only=True)
+    doctor = 'doctor.serializers.DoctorSerializer'
     status = serializers.CharField(read_only=True)
     
     class Meta:
@@ -115,7 +114,7 @@ class AppointmentCreateSerializer(serializers.ModelSerializer):
         return super().create(validated_data)
 
 class PatientAppointmentDetailSerializer(serializers.ModelSerializer):
-    doctor = DoctorSerializer(read_only=True)
+    doctor = 'doctor.serializers.DoctorSerializer'
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     appointment_time = serializers.SerializerMethodField()
     
@@ -135,7 +134,7 @@ class PatientAppointmentDetailSerializer(serializers.ModelSerializer):
 
 class PatientReviewSerializers(serializers.ModelSerializer):
     patient = ProfileSerializer(read_only=True)
-    doctor = DoctorSerializer(read_only=True)
+    doctor = 'doctor.serializers.DoctorSerializer'
     appointment = PatientAppointmentSerializer(read_only=True)
     
     class Meta:
@@ -165,20 +164,19 @@ class PatientReviewSerializers(serializers.ModelSerializer):
         user = self.context['request'].user
 
         if appointment.patient.user != user:
-            raise serializers.ValidationError('Вы можетет оставлять заявки только на свой приём')
+            raise serializers.ValidationError('Вы можете оставлять отзывы только на свой приём')
 
         if appointment.status != 'visited':
-            raise serializers.ValidationError('В можете оставить отзыв только после посещения приёма')
+            raise serializers.ValidationError('Вы можете оставить отзыв только после посещения приёма')
 
         return data
 
-    # Используем метод create послольку поля 'doctor' и 'patient' находятся в поле read_only_fields
     def create(self, validated_data):
         # Автоподставка doctor и patient
         appointment = validated_data['appointment']
-        validated_data['doctor'] =  appointment.doctor
+        validated_data['doctor'] = appointment.doctor
         validated_data['patient'] = appointment.patient
-        return super().create(validate_data)
+        return super().create(validated_data)
 
 
 

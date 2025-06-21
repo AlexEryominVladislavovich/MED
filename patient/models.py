@@ -6,7 +6,10 @@ from django.db.models import  UniqueConstraint
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 from django.core.validators import MinValueValidator, MaxValueValidator, RegexValidator, MinLengthValidator, MaxLengthValidator
+from django.db.models.signals import post_save, post_delete
+from django.dispatch import receiver
 import re
+import uuid
 
 kg_phone_validator = RegexValidator(
     regex=r'^\+996(22\d|55\d|70\d|99\d|77\d|54\d|51\d|57\d|56\d|50\d)\d{6}$',
@@ -23,7 +26,9 @@ class Profile(models.Model):
     user = models.OneToOneField(
         User,
         on_delete=models.CASCADE,
-        verbose_name="Пользователь"
+        verbose_name="Пользователь",
+        null=True,  # Разрешаем пустое значение для гостевых пользователей
+        blank=True  # Разрешаем пустое значение в формах для гостевых пользователей
     )
     full_name = models.CharField(
         max_length=35,
@@ -36,8 +41,17 @@ class Profile(models.Model):
     phone_number = models.CharField(
         max_length=13,
         validators=[kg_phone_validator],
-        unique=True,
         verbose_name="Номер телефона"
+    )
+    is_guest = models.BooleanField(
+        default=False,
+        verbose_name="Гостевой пользователь"
+    )
+    username = models.CharField(
+        max_length=50,
+        unique=True,
+        verbose_name="Имя пользователя",
+        default='user'  # Значение по умолчанию для существующих записей
     )
 
     class Meta:
@@ -65,10 +79,17 @@ class Profile(models.Model):
             normalized = value
         else:
             raise ValidationError({'phone_number': 'Введите корректный номер в формате +996XXXXXXXXX'})
-        if Profile.objects.exclude(pk=self.pk).filter(phone_number=normalized).exists():
-            raise ValidationError({'phone_number':'Этот номер уже используется'})
 
         self.phone_number = normalized
+
+    def save(self, *args, **kwargs):
+        # Если имя пользователя не задано и пользователь существует, используем его username
+        if not self.username and self.user:
+            self.username = self.user.username
+        # Если имя пользователя не задано и нет пользователя (гость), генерируем уникальное имя
+        elif not self.username:
+            self.username = f"guest_{uuid.uuid4().hex[:8]}"
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f'{self.full_name}'
@@ -143,6 +164,34 @@ class Appointment(models.Model):
         validators=[MaxLengthValidator(1000)],
         verbose_name="Описание"
     )
+    price = models.DecimalField(
+        max_digits=8,
+        decimal_places=2,
+        validators=[
+            MinValueValidator(0, message='Цена не может быть отрицательной'),
+            MaxValueValidator(100000, message='Цена не может превышать 100 000')
+        ],
+        verbose_name="Цена",
+        default=0
+    )
+
+    guest_name = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        verbose_name="Имя гостя"
+    )
+    guest_phone = models.CharField(
+        max_length=20,
+        blank=True,
+        null=True,
+        verbose_name="Телефон гостя"
+    )
+    guest_comment = models.TextField(
+        blank=True,
+        null=True,
+        verbose_name="Комментарий гостя"
+    )
 
     # Запрещает пересечение новых заявок с занятым временем
     class Meta:
@@ -194,6 +243,26 @@ class Appointment(models.Model):
             raise ValidationError('Не указанно время переноса.')
         if self.treatment_appointment and self.status != 'rescheduled':
             raise ValidationError('Время переноса указанно, но статус не "перенесенно"')
+
+@receiver(post_save, sender=Appointment)
+def update_timeslot_on_appointment_save(sender, instance, created, **kwargs):
+    """
+    Обновляет статус доступности временного слота при создании/изменении записи
+    """
+    if instance.time_slot:
+        # Если запись не отменена, помечаем слот как недоступный
+        is_available = instance.status in ['cancelled_by_patient', 'cancelled_by_admin']
+        instance.time_slot.is_available = is_available
+        instance.time_slot.save()
+
+@receiver(post_delete, sender=Appointment)
+def update_timeslot_on_appointment_delete(sender, instance, **kwargs):
+    """
+    Обновляет статус доступности временного слота при удалении записи
+    """
+    if instance.time_slot:
+        instance.time_slot.is_available = True
+        instance.time_slot.save()
 
 class Review(models.Model):
     doctor = models.ForeignKey(
@@ -271,7 +340,7 @@ class Notification(models.Model):
         related_name='notifications',
         verbose_name="Приём",
         null=True,
-        blank=True  # Для уведомлений регистрации appointment не нужен
+        blank=True  # Для уведомлений о регистрации запись на прием не нужна
     )
     profile = models.ForeignKey(
         Profile,

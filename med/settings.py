@@ -13,6 +13,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 import os.path
 from pathlib import Path
 from datetime import timedelta
+import os
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -27,12 +28,13 @@ SECRET_KEY = 'django-insecure-e=b#i!@^8j)!m58aya%=col=)40z(vi6cf1d^b^_8-%76d@h5*
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ["*"]
 
 
 # Application definition
 
 INSTALLED_APPS = [
+    'modeltranslation',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -59,13 +61,16 @@ REST_FRAMEWORK = {
 
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
+    'doctor.middleware.LanguageMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
+    'django.middleware.locale.LocaleMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'doctor.middleware.SlotGenerationMiddleware',
 ]
 
 SIMPLE_JWT = {
@@ -88,6 +93,7 @@ CORS_ALLOW_METHODS = [
 CORS_ALLOW_HEADERS = [
     'accept',
     'accept-encoding',
+    'accept-language',
     'authorization',
     'content-type',
     'dnt',
@@ -151,19 +157,40 @@ AUTH_PASSWORD_VALIDATORS = [
 # Internationalization
 # https://docs.djangoproject.com/en/5.2/topics/i18n/
 
-LANGUAGE_CODE = 'en-us'
+LANGUAGES = [
+    ('ru', 'Русский'),
+    ('ky', 'Кыргызча'),
+]
 
-TIME_ZONE = 'UTC'
+LANGUAGE_CODE = 'ru'
+
+TIME_ZONE = 'Asia/Bishkek'
 
 USE_I18N = True
 
+USE_L10N = True
+
 USE_TZ = True
+
+# Пути к файлам переводов
+LOCALE_PATHS = [
+    os.path.join(BASE_DIR, 'locale'),
+]
+
+MODELTRANSLATION_DEFAULT_LANGUAGE = 'ru'
+MODELTRANSLATION_LANGUAGES = ('ru', 'ky')
+MODELTRANSLATION_FALLBACK_LANGUAGES = ('ru', 'ky')
 
 
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = 'static/'
+STATIC_ROOT = 'staticfiles/'
+
+STATICFILES_DIRS = [
+    os.path.join(BASE_DIR, 'static'),
+]
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
